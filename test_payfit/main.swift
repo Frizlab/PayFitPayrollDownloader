@@ -152,7 +152,12 @@ struct Payroll : Decodable {
 }
 
 
-let authInfo = try authenticatePayFit(username: "REDACTED", password: "REDACTED")
+guard CommandLine.arguments.count == 3 else {
+	print("usage: \(CommandLine.arguments[0]) username password") /* We should output on stderr... */
+	exit(1)
+}
+
+let authInfo = try authenticatePayFit(username: CommandLine.arguments[1], password: CommandLine.arguments[2])
 
 let config = URLSessionConfiguration.ephemeral
 config.httpShouldSetCookies = false
