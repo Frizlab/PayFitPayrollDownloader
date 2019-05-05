@@ -13,7 +13,7 @@ import Foundation
 enum PFAuthenticationError : Error {
 	
 	case communicationError
-	case tooManyAccounts
+	case tooManyOrNoAccounts
 	
 	case unknownError
 	
@@ -57,45 +57,57 @@ class SessionDelegate : NSObject, URLSessionTaskDelegate {
 
 
 func authenticatePayFit(username: String, password: String) throws -> AuthInfo {
-	struct SigninInfo : Encodable {
-		let s = ""
-		var email: String
-		var password: String
-		let language = "en"
-		
-		init(email e: String, password p: String) {
-			email = e
-			password = p
-		}
-	}
-	
-	
 	let config = URLSessionConfiguration.ephemeral
 	config.httpShouldSetCookies = false
 	config.httpCookieAcceptPolicy = .never
 	let sessionDelegate = SessionDelegate()
 	let session = URLSession(configuration: config, delegate: sessionDelegate, delegateQueue: nil)
 	
-	let authURL = URL(string: "https://api.payfit.com/auth/signin")!
-	var authRequest = URLRequest(url: authURL)
-	authRequest.httpMethod = "POST"
-	authRequest.addValue("application/json;charset=UTF-8", forHTTPHeaderField: "Content-Type")
-	authRequest.httpBody = try JSONEncoder().encode(SigninInfo(email: username, password: password))
-	guard let (authDataO, authResultO) = try? session.synchronousDataTask(with: authRequest), let authData = authDataO, let authResult = authResultO as? HTTPURLResponse else {
-		throw PFAuthenticationError.communicationError
+	func signinResult(doubleAuthCode: String?) throws -> [String: Any?] {
+		var signinInfo = [
+			"s": "",
+			"email": username,
+			"password": password
+		]
+		if let code = doubleAuthCode {
+			signinInfo["multiFactorCode"] = code
+		}
+		
+		let authURL = URL(string: "https://api.payfit.com/auth/signin")!
+		var authRequest = URLRequest(url: authURL)
+		authRequest.httpMethod = "POST"
+		authRequest.httpBody = try! JSONEncoder().encode(signinInfo)
+		authRequest.addValue("application/json;charset=UTF-8", forHTTPHeaderField: "Content-Type")
+		guard let (authDataO, authResultO) = try? session.synchronousDataTask(with: authRequest), let authData = authDataO, let authResult = authResultO as? HTTPURLResponse else {
+			throw PFAuthenticationError.communicationError
+		}
+		
+		guard
+			200..<300 ~= authResult.statusCode,
+			let authResultObject = (try? JSONSerialization.jsonObject(with: authData, options: [])) as? [String: Any?]
+		else {
+			throw PFAuthenticationError.unknownError
+		}
+		
+		sessionDelegate.addCookies(from: authResult)
+		
+		guard !(authResultObject["isMultiFactorRequired"] as? Bool ?? false) else {
+			/* Auth code required */
+			print("Please enter auth code: ", terminator: "")
+			guard let code = readLine() else {
+				throw PFAuthenticationError.unknownError
+			}
+			return try signinResult(doubleAuthCode: code)
+		}
+		
+		return authResultObject
 	}
+	
+	let authResultObject = try signinResult(doubleAuthCode: nil)
 	
 	/* Checking (very succinctly) we're correctly authenticated */
-	guard
-		200..<300 ~= authResult.statusCode,
-		let jsonObject = (try? JSONSerialization.jsonObject(with: authData, options: [])) as? [String: Any],
-		let accounts = jsonObject["accounts"] as? [[String: Any?]]
-	else {
-		throw PFAuthenticationError.unknownError
-	}
-	
-	guard let account = accounts.first, accounts.count == 1 else {
-		throw PFAuthenticationError.tooManyAccounts
+	guard let accounts = authResultObject["accounts"] as? [[String: Any?]], let account = accounts.first, accounts.count == 1 else {
+		throw PFAuthenticationError.tooManyOrNoAccounts
 	}
 	
 	guard
@@ -107,7 +119,6 @@ func authenticatePayFit(username: String, password: String) throws -> AuthInfo {
 	
 	let companyId = idComponents[0]
 	let employeeId = idComponents[1]
-	sessionDelegate.addCookies(from: authResult)
 	
 	var updateAccountURLComponents = URLComponents(string: "https://api.payfit.com/auth/updateCurrentAccount")!
 	updateAccountURLComponents.queryItems = [
