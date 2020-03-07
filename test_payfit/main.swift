@@ -138,10 +138,12 @@ func authenticatePayFit(username: String, password: String) throws -> AuthInfo {
 	return AuthInfo(cookies: sessionDelegate.cookies, companyId: companyId, employeeId: employeeId)
 }
 
-func performAPICall(session: URLSession, urlAsString: String, method: String = "GET") -> Data? {
+func performAPICall(session: URLSession, urlAsString: String, method: String = "GET", body: Data? = nil) -> Data? {
 	guard let url = URL(string: urlAsString) else {return nil}
 	var request = URLRequest(url: url)
 	request.httpMethod = method
+	request.httpBody = body
+	if body != nil {request.addValue("application/json", forHTTPHeaderField: "Content-Type")}
 	guard let (dataO, resultO) = try? session.synchronousDataTask(with: request), let data = dataO, let result = resultO as? HTTPURLResponse else {
 		return nil
 	}
@@ -149,16 +151,33 @@ func performAPICall(session: URLSession, urlAsString: String, method: String = "
 	return data
 }
 
-func performJSONAPICall<T : Decodable>(session: URLSession, urlAsString: String, method: String = "GET") -> T? {
-	guard let data = performAPICall(session: session, urlAsString: urlAsString, method: method) else {return nil}
+func performJSONAPICall<T : Decodable>(session: URLSession, urlAsString: String, method: String = "GET", body: Data? = nil) -> T? {
+	guard let data = performAPICall(session: session, urlAsString: urlAsString, method: method, body: body) else {return nil}
 	return try? JSONDecoder().decode(T.self, from: data)
 }
 
 
+struct Category : Decodable {
+	
+	var id: String
+	var name: String
+	var requiredIdFields: [String]
+	/* And other stuff; but we only care about the id tbh */
+	
+}
+
+struct FilesInfo : Encodable {
+	
+	var employeeIds: [String]
+	var companyIds: [String]
+	var categoryIds: [String]
+	
+}
+
 struct Payroll : Decodable {
 	
+	var id: String
 	var absoluteMonth: Int
-	var url: URL
 	
 }
 
@@ -177,7 +196,14 @@ config.httpAdditionalHeaders = HTTPCookie.requestHeaderFields(with: authInfo.coo
 	.merging(["x-payfit-id": authInfo.employeeId], uniquingKeysWith: { current, _ in current })
 let session = URLSession(configuration: config)
 
-guard let payrolls: [Payroll] = performJSONAPICall(session: session, urlAsString: "https://api.payfit.com/hr/employees/payrolls", method: "POST") else {
+guard let category: Category = performJSONAPICall(session: session, urlAsString: "https://api.payfit.com/files/category?name=payslip&country=FR") else {
+	print("Cannot get the payslip category id, which is required to download the payslips")
+	exit(1)
+}
+let filesInfo = FilesInfo(employeeIds: [authInfo.employeeId], companyIds: [authInfo.companyId], categoryIds: [category.id])
+let filesInfoData = try JSONEncoder().encode(filesInfo)
+guard let payrolls: [Payroll] = performJSONAPICall(session: session, urlAsString: "https://api.payfit.com/files/files", method: "POST", body: filesInfoData) else {
+	print("Cannot get the payrolls ids")
 	exit(1)
 }
 
@@ -189,11 +215,8 @@ for payroll in payrolls {
 	/* We skip already downloaded files */
 	guard !FileManager.default.fileExists(atPath: pdfURL.path) else {continue}
 	
-	var urlComponents = URLComponents(url: payroll.url, resolvingAgainstBaseURL: true)!
-	urlComponents.queryItems = urlComponents.queryItems ?? [] + [
-		URLQueryItem(name: "attachment", value: "1")
-	]
-	guard let pdfData = performAPICall(session: session, urlAsString: urlComponents.url!.absoluteString) else {
+	let url = URL(string: "https://api.payfit.com/files/file")!.appendingPathComponent(payroll.id)
+	guard let pdfData = performAPICall(session: session, urlAsString: url.absoluteString) else {
 		print("warning: skipping month \(payroll.absoluteMonth) because I can't retrieve the data")
 		continue
 	}
