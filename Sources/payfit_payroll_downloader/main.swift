@@ -8,6 +8,8 @@
 
 import Foundation
 
+import GenericJSON
+
 
 
 enum PFAuthenticationError : Error {
@@ -64,13 +66,17 @@ func authenticatePayFit(username: String, password: String) throws -> AuthInfo {
 	let session = URLSession(configuration: config, delegate: sessionDelegate, delegateQueue: nil)
 	
 	func signinResult(doubleAuthCode: String?) throws -> [String: Any?] {
-		var signinInfo = [
+		/* Cannot find the hash method they used. Seems to be sha256, but probably
+		 * with a fixed salt that I was not able to find when browsing the
+		 * minified JS code… */
+		var signinInfo: JSON = [
 			"s": "",
-			"email": username,
-			"password": password
+			"email": .string(username),
+			"password": .string(password), /* Should be hashed */
+			"isHashed": false /* Should be true */
 		]
 		if let code = doubleAuthCode {
-			signinInfo["multiFactorCode"] = code
+			signinInfo = signinInfo.merging(with: ["multiFactorCode": .string(code)])
 		}
 		
 		let authURL = URL(string: "https://api.payfit.com/auth/signin")!
