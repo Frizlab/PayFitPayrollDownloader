@@ -1,6 +1,6 @@
 /*
  * main.swift
- * test_payfit
+ * payfit-payroll-downloader
  *
  * Created by François Lamboley on 2019/5/4.
  * Copyright © 2019 Frizlab. All rights reserved.

@@ -1,6 +1,6 @@
 /*
  * URLSession+Synchronous.swift
- * ghapp
+ * payfit-payroll-downloader
  *
  * Created by François Lamboley on 2/6/17.
  * Copyright © 2017 happn. All rights reserved.
